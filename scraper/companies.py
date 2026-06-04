@@ -28,6 +28,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from models import Job  # noqa: E402
+import config           # noqa: E402
 
 logger = logging.getLogger("scraper.companies")
 
@@ -43,58 +44,10 @@ _SESSION.headers.update({
 TIMEOUT = 15
 
 # ── Target city areas — SAME as LinkedIn scraper ──────────────────────────────
-_IL_TERMS = {
-    # Tel Aviv metro
-    "tel aviv", "ramat gan", "petah tikva", "holon", "bat yam",
-    "givatayim", "kiryat ono", "or yehuda", "airport city", "lod",
-    "ramla", "rishon", "yahud", "bnei brak", "azur",
-    # Herzliya + North Sharon
-    "herzliya", "ra'anana", "raanana", "kfar saba", "hod hasharon",
-    "tel mond", "even yehuda",
-    # Rehovot corridor
-    "rehovot", "nes ziona", "yavne", "gedera", "rechovot",
-    # Jerusalem
-    "jerusalem",
-    # Ashdod
-    "ashdod",
-    # NOTE: "remote" intentionally omitted — "Remote, UK" etc. would false-match
-    # Bare "israel" is handled in _is_israel() below
-}
-
-# Locations that should NOT pass
-_IL_EXCLUDE = {
-    "yokneam", "haifa", "beer sheva", "be'er sheva", "netanya",
-    "nahariya", "afula", "tiberias", "eilat", "karmiel", "acre", "akko",
-    "nazareth",
-}
-
-# ── Role keyword filters ───────────────────────────────────────────────────────
-_INCLUDE = {
-    "software engineer", "software developer",
-    "backend", "back-end", "back end",
-    "full stack", "fullstack", "full-stack",
-    "c# developer", "c# engineer",
-    "python developer", "python engineer",
-    "r&d engineer", "r&d developer",
-    "embedded software", "embedded engineer",
-    "application engineer", "application developer",
-    "server engineer", "server developer",
-    "developer", "engineer",
-}
-
-_EXCLUDE = {
-    "devops", "devsecops", "site reliability", "sre",
-    "data engineer", "data scientist", "data analyst",
-    "cloud engineer", "cloud architect",
-    "ml engineer", "machine learning",
-    "network engineer", "automation engineer",
-    "qa engineer", "quality assurance",
-    "security researcher", "security engineer",
-    "hardware engineer", "electrical engineer", "mechanical engineer",
-    "sales engineer", "solutions engineer", "field engineer",
-    "product manager", "scrum", "marketing",
-    "ui developer", "ui engineer", "ux", "ui/ux",
-}
+_IL_TERMS = config.TARGET_LOCATIONS - {"remote"}  # "remote" can false-match "Remote, UK"
+_IL_EXCLUDE = config.EXCLUDE_LOCATIONS
+_INCLUDE = config.INCLUDE_TITLE_TERMS
+_EXCLUDE = config.EXCLUDE_TITLE_TERMS
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -227,7 +180,7 @@ def _google() -> List[Job]:
     )
     if not html:
         return []
-    soup = BeautifulSoup(html, "lxml")
+    soup = BeautifulSoup(html, "html.parser")
     jobs = []
     # Job links follow pattern: jobs/results/{id}-{slug}
     seen = set()
@@ -396,7 +349,7 @@ def _shabak() -> List[Job]:
     html = _get("https://www.shabak.gov.il/career/", json_mode=False)
     if not html:
         return []
-    soup = BeautifulSoup(html, "lxml")
+    soup = BeautifulSoup(html, "html.parser")
     jobs = []
     for el in soup.select("a[href*='career'], a[href*='job']"):
         title = el.get_text(strip=True)

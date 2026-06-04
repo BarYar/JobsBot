@@ -1,53 +1,30 @@
 """
-db.py – SQLite-backed deduplication store.
+db.py – DynamoDB-backed deduplication store.
 
 Tracks which (source, job_id) pairs have already been sent to Telegram
 so we never send the same job twice.
+
+Table schema:
+  PK: job_key  (String)  →  "{source}#{job_id}"
 """
-import sqlite3
-import pathlib
-import threading
-from typing import List
+import os
+from datetime import datetime, timezone
 
-_DB_PATH = pathlib.Path(__file__).parent / "seen_jobs.db"
-_db_lock = threading.Lock()
+import boto3
 
-
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(_DB_PATH, check_same_thread=False)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS seen_jobs (
-            source  TEXT NOT NULL,
-            job_id  TEXT NOT NULL,
-            seen_at TEXT NOT NULL DEFAULT (datetime('now')),
-            PRIMARY KEY (source, job_id)
-        )
-        """
-    )
-    conn.commit()
-    return conn
+_TABLE_NAME = os.getenv("DYNAMODB_TABLE", "jobsbot-seen-jobs")
+_table = boto3.resource("dynamodb").Table(_TABLE_NAME)
 
 
 def is_new(source: str, job_id: str) -> bool:
     """Return True if this (source, job_id) pair has NOT been seen before."""
-    with _db_lock:
-        with _get_conn() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM seen_jobs WHERE source=? AND job_id=?",
-                (source, job_id),
-            ).fetchone()
-            return row is None
+    resp = _table.get_item(Key={"job_key": f"{source}#{job_id}"})
+    return "Item" not in resp
 
 
 def mark_seen(source: str, job_id: str) -> None:
     """Record that we have already notified about this job."""
-    with _db_lock:
-        with _get_conn() as conn:
-            conn.execute(
-                "INSERT OR IGNORE INTO seen_jobs (source, job_id) VALUES (?, ?)",
-                (source, job_id),
-            )
-            conn.commit()
-
-
+    _table.put_item(Item={
+        "job_key": f"{source}#{job_id}",
+        "seen_at": datetime.now(timezone.utc).isoformat(),
+    })

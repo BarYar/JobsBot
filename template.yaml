@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: JobsBot - Scrapes LinkedIn and company career pages, sends jobs to Telegram
+
+Globals:
+  Function:
+    Runtime: python3.13
+    Timeout: 900
+    MemorySize: 512
+    Environment:
+      Variables:
+        DYNAMODB_TABLE: !Ref SeenJobsTable
+        TELEGRAM_BOT_TOKEN: '{{resolve:ssm:/jobsbot/telegram-bot-token}}'
+        TELEGRAM_CHAT_ID: '{{resolve:ssm:/jobsbot/telegram-chat-id}}'
+
+Resources:
+  SeenJobsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: jobsbot-seen-jobs
+      AttributeDefinitions:
+        - AttributeName: job_key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: job_key
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  JobsBotFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: jobsbot
+      Handler: main.lambda_handler
+      CodeUri: .
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SeenJobsTable
+      Events:
+        Schedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(23 minutes)
+            Enabled: true
+
+Outputs:
+  FunctionArn:
+    Value: !GetAtt JobsBotFunction.Arn
+  TableName:
+    Value: !Ref SeenJobsTable

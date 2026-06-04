@@ -14,6 +14,7 @@ from telegram.request import HTTPXRequest
 import config
 from models import Job
 
+
 logger = logging.getLogger(__name__)
 
 # ── One persistent event loop ─────────────────────────────────────────────────
@@ -171,29 +172,25 @@ def _detect_years(title: str, description: str = "") -> str | None:
 
 
 def _is_csharp_junior(tech: list[str], years_str: str | None) -> bool:
-    """True if this is a C# job requiring 0-4 years experience."""
+    """True if this is a C# job within the configured experience limit."""
     if "C#" not in tech and ".NET" not in tech:
         return False
     if years_str is None:
-        return True   # no years mentioned → assume junior-friendly
-    # Parse the lower bound
+        return True
     m = re.match(r"(\d+)", years_str)
-    if m and int(m.group(1)) <= 4:
+    if m and int(m.group(1)) <= config.MAX_EXPERIENCE_YEARS:
         return True
     return False
 
 
-def _exceeds_4_years(years_str: str | None) -> bool:
-    """Return True if the detected experience requirement is clearly > 4 years.
-    When unknown/unspecified we let it through (return False)."""
+def _exceeds_max_years(years_str: str | None) -> bool:
+    """Return True if the job clearly requires more than MAX_EXPERIENCE_YEARS."""
     if years_str is None:
         return False
-    # "5+ yrs (Senior)", "5+ yrs", "6-10 yrs" → skip
-    # "0-2 yrs (Junior)", "2-5 yrs (Mid)", "3+ yrs", "4-6 yrs" → check lower bound
     if "Senior" in years_str or "senior" in years_str:
-        return True
+        return config.MAX_EXPERIENCE_YEARS < 5
     m = re.match(r"(\d+)", years_str)
-    if m and int(m.group(1)) >= 5:
+    if m and int(m.group(1)) > config.MAX_EXPERIENCE_YEARS:
         return True
     return False
 
@@ -252,8 +249,7 @@ def _format_job(job: Job) -> str | None:
     tech  = _detect_tech(search_text)
     years = _detect_years(job.title, job.description_snippet)
 
-    # Skip jobs that clearly require more than 4 years
-    if _exceeds_4_years(years):
+    if _exceeds_max_years(years):
         logger.debug("[Telegram] Skipping '%s' — over-experience: %s", job.title, years)
         return None
 

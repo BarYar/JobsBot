@@ -23,6 +23,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from models import Job   # noqa: E402
 import db                # noqa: E402
+import config            # noqa: E402
 
 logger = logging.getLogger("scraper.linkedin")
 
@@ -32,25 +33,7 @@ logger = logging.getLogger("scraper.linkedin")
 # Broad keywords — each surfaces a different slice of LinkedIn's index.
 # "developer" and "engineer" alone are too broad and return irrelevant roles,
 # so we use specific compound terms to get targeted results.
-_KEYWORDS = [
-    # Core titles
-    "software developer",
-    "software engineer",
-    "backend developer",
-    "backend engineer",
-    "full stack developer",
-    "full stack engineer",
-    # Language-specific
-    "C# developer",
-    ".NET developer",
-    "java developer",
-    "python developer",
-    # Other common Israeli titles
-    "R&D engineer",
-    "R&D developer",
-    "application developer",
-    "web developer",
-]
+_KEYWORDS = config.LINKEDIN_SEARCH_KEYWORDS
 
 # Israel country-level geoId
 _ISRAEL_GEO_ID = "101620260"
@@ -70,51 +53,10 @@ _TIME_WINDOWS = [
     ("7d",  "r604800"),
 ]
 
-_TARGET_LOCATIONS = {
-    "tel aviv", "ramat gan", "petah tikva", "holon", "bat yam",
-    "givatayim", "kiryat ono", "or yehuda", "airport city", "lod",
-    "ramla", "rishon", "yahud", "bnei brak", "azur",
-    "herzliya", "ra'anana", "raanana", "kfar saba", "hod hasharon",
-    "tel mond", "even yehuda",
-    "rehovot", "nes ziona", "yavne", "gedera", "rechovot",
-    "jerusalem",
-    "ashdod",
-    "remote",
-}
-
-_EXCLUDE_LOCATIONS = {
-    "yokneam", "haifa", "beer sheva", "be'er sheva", "netanya",
-    "nahariya", "afula", "tiberias", "eilat", "karmiel", "acre", "akko",
-    "nazareth", "rosh haayin", "modiin",
-}
-
-_INCLUDE_TERMS = {
-    "software engineer", "software developer",
-    "backend", "back-end", "back end",
-    "full stack", "fullstack", "full-stack",
-    "c# developer", "c# engineer",
-    "python developer", "python engineer",
-    "java developer", "java engineer",
-    "r&d engineer", "r&d developer",
-    "embedded software", "embedded engineer",
-    "application engineer", "application developer",
-    "server engineer", "server developer",
-    "developer", "engineer",
-}
-
-_EXCLUDE_TERMS = {
-    "frontend", "front-end", "front end",
-    "ui developer", "ui engineer", "ux ", "ui/ux",
-    "devops", "devsecops", "site reliability", "sre",
-    "data engineer", "data scientist", "data analyst",
-    "cloud engineer", "cloud architect",
-    "ml engineer", "machine learning",
-    "network engineer", "automation engineer",
-    "qa engineer", "quality assurance",
-    "security researcher", "security engineer",
-    "hardware engineer", "electrical engineer", "mechanical engineer",
-    "sales engineer", "solutions engineer", "field engineer",
-}
+_TARGET_LOCATIONS = config.TARGET_LOCATIONS
+_EXCLUDE_LOCATIONS = config.EXCLUDE_LOCATIONS
+_INCLUDE_TERMS = config.INCLUDE_TITLE_TERMS
+_EXCLUDE_TERMS = config.EXCLUDE_TITLE_TERMS
 
 
 def _is_target_location(location: str) -> bool:
@@ -189,7 +131,7 @@ def _fetch_job_detail(job_id: str) -> tuple[str, datetime | None]:
         resp = session.get(url, timeout=12, verify=False)
         if resp.status_code != 200:
             return "", None
-        soup = BeautifulSoup(resp.text, "lxml")
+        soup = BeautifulSoup(resp.text, "html.parser")
         posted_at = None
         time_el = soup.find("span", class_=re.compile(r"posted-time-ago__text"))
         if time_el:
@@ -207,7 +149,7 @@ def _fetch_guest_page(
     start: int = 0,
     geo_id: str = _ISRAEL_GEO_ID,
     time_range: str = "r86400",
-) -> List[BeautifulSoup]:
+) -> list:
     """Fetch one page from the guest API."""
     params = {
         "keywords": keyword,
@@ -219,23 +161,24 @@ def _fetch_guest_page(
         "start": str(start),
     }
     url = _GUEST_URL + "?" + urlencode(params)
-    backoff = 60
     session = _get_session()
-    for _ in range(3):
+    for attempt in range(3):
         try:
             resp = session.get(url, timeout=15, verify=False)
             if resp.status_code == 429:
-                logger.warning("[LinkedIn] 429 — sleeping %ds", backoff)
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 300)
+                # On Lambda, sleeping long burns execution time — give up fast
+                wait = 5 * (attempt + 1)
+                logger.warning("[LinkedIn] 429 — sleeping %ds (attempt %d/3)", wait, attempt + 1)
+                time.sleep(wait)
                 continue
             if resp.status_code in (401, 403):
                 return []
             resp.raise_for_status()
-            return BeautifulSoup(resp.text, "lxml").find_all("li")
+            return BeautifulSoup(resp.text, "html.parser").find_all("li")
         except requests.RequestException as exc:
             logger.debug("[LinkedIn] Request failed (kw=%s): %s", keyword, exc)
             return []
+    logger.warning("[LinkedIn] Giving up on kw='%s' after 3x 429.", keyword)
     return []
 
 
